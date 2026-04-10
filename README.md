@@ -32,16 +32,25 @@ Run from the root of your module (where `go.mod` lives):
 esmutant run ./... --threshold 80
 ```
 
+When your production code and integration tests live in separate packages, use `--test` to specify where to run the tests:
+
+```bash
+esmutant run ./internal/repository/... \
+  --test ./testing/integration/... \
+  --workers 1
+```
+
 ### Flags
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--dir` | `-d` | `.` | Project root directory (where `go.mod` lives) |
+| `--test` | | *(same as pattern)* | Package pattern for running tests; use when tests are in a different package from the mutated code |
 | `--workers` | `-w` | `4` | Number of parallel workers |
 | `--timeout` | `-t` | `30` | Per-test timeout in seconds |
 | `--threshold` | | `80.0` | Minimum mutation score (0–100); exits with code 1 if below |
 | `--output` | `-o` | `console` | Output format: `console` or `json` |
-| `--verbose` | `-v` | `false` | Show `go test` output for survived/skipped mutants |
+| `--verbose` | `-v` | `false` | Show `go test` output for survived/errored mutants |
 
 ### Example output
 
@@ -57,7 +66,11 @@ Generating mutants...
 Running 13 mutant(s) (4 worker(s)) ...
 
 Mutation Score: 9/11 (81.8%)
-Skipped: 2 (not counted in score)
+  Killed: 9  Survived: 2  Timeouts: 0  Errors: 0  |  Skipped: 2 (not counted in score)
+
+KILLED (9):
+  example/search.go:41 BuildActiveUsersQuery    BoolQuery.Must → nil    [RemoveClause]
+  ...
 
 SURVIVED (2):
   example/search.go:98 BuildArticlesQuery    BoolQuery.Must → Should    [MustToShould]
