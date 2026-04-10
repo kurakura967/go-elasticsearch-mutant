@@ -2,9 +2,6 @@ package mutant
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
 
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/analyzer"
 )
@@ -45,52 +42,4 @@ func (f *FilterToMust) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 		Description: "BoolQuery.Filter → Must",
 		ModifiedSrc: src,
 	}}, nil
-}
-
-// hasSiblingField reports whether the composite literal that contains the
-// KeyValueExpr at site.Line/site.Field also has a field named siblingField.
-func hasSiblingField(site *analyzer.CallSite, siblingField string) bool {
-	src, err := os.ReadFile(site.File)
-	if err != nil {
-		return false
-	}
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, site.File, src, 0)
-	if err != nil {
-		return false
-	}
-
-	found := false
-	ast.Inspect(f, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		lit, ok := n.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		containsTarget := false
-		hasSibling := false
-		for _, elt := range lit.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				continue
-			}
-			ident, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			if fset.Position(kv.Pos()).Line == site.Line && ident.Name == site.Field {
-				containsTarget = true
-			}
-			if ident.Name == siblingField {
-				hasSibling = true
-			}
-		}
-		if containsTarget && hasSibling {
-			found = true
-		}
-		return true
-	})
-	return found
 }

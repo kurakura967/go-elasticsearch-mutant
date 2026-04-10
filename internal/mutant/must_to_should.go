@@ -16,6 +16,17 @@ func (m *MustToShould) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 		return nil, nil
 	}
 
+	// If the same BoolQuery already has a Should field, renaming Must to Should
+	// would create a duplicate struct key — a compile error. Skip with a reason.
+	if hasSiblingField(site, "Should") {
+		return []*Mutant{{
+			Site:        site,
+			Operator:    m.Name(),
+			Description: "BoolQuery.Must → Should",
+			SkipReason:  "BoolQuery already has a Should field; renaming Must would create a duplicate struct key",
+		}}, nil
+	}
+
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
 		kv.Key.(*ast.Ident).Name = "Should"
 	})

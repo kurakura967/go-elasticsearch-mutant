@@ -38,6 +38,19 @@ func build() {
 }
 `
 
+// mustOnlySrc is a BoolQuery with Must but no Should,
+// used to test MustToShould without triggering the sibling-field guard.
+const mustOnlySrc = `package test
+
+func build() {
+	_ = BoolQuery{
+		Must:    foo(),
+		Filter:  bar(),
+		MustNot: baz(),
+	}
+}
+`
+
 const rangeSrc = `package test
 
 func build() {
@@ -233,13 +246,17 @@ func TestFilterToMust(t *testing.T) {
 
 func TestMustToShould(t *testing.T) {
 	t.Run("Must_to_Should", func(t *testing.T) {
-		f := writeFixture(t, boolSrc)
-		ms, err := (&mutant.MustToShould{}).Apply(makeSite(f, boolSrc, "Must", "BoolQuery"))
+		// Use mustOnlySrc (no Should sibling) so the guard does not trigger.
+		f := writeFixture(t, mustOnlySrc)
+		ms, err := (&mutant.MustToShould{}).Apply(makeSite(f, mustOnlySrc, "Must", "BoolQuery"))
 		if err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
 		if len(ms) != 1 {
 			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason != "" {
+			t.Fatalf("expected non-skipped mutant, got skip reason: %s", ms[0].SkipReason)
 		}
 		got := string(ms[0].ModifiedSrc)
 		if !hasField(got, "Should") {
@@ -250,7 +267,22 @@ func TestMustToShould(t *testing.T) {
 		}
 	})
 
-	t.Run("skip_Filter", func(t *testing.T) {
+	t.Run("skip_when_Should_sibling_exists", func(t *testing.T) {
+		// boolSrc has both Must and Should → guard should trigger.
+		f := writeFixture(t, boolSrc)
+		ms, err := (&mutant.MustToShould{}).Apply(makeSite(f, boolSrc, "Must", "BoolQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 skipped mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason == "" {
+			t.Errorf("expected SkipReason to be set, got empty")
+		}
+	})
+
+	t.Run("inapplicable_Filter", func(t *testing.T) {
 		f := writeFixture(t, boolSrc)
 		ms, _ := (&mutant.MustToShould{}).Apply(makeSite(f, boolSrc, "Filter", "BoolQuery"))
 		if len(ms) != 0 {
@@ -372,11 +404,12 @@ func TestGenerate_Metadata(t *testing.T) {
 		if m.Description == "" {
 			t.Error("Description field is empty")
 		}
-		if len(m.ModifiedSrc) == 0 {
-			t.Error("ModifiedSrc is empty")
-		}
 		if m.Site == nil {
 			t.Error("Site is nil")
+		}
+		// Skipped mutants legitimately have no ModifiedSrc.
+		if m.SkipReason == "" && len(m.ModifiedSrc) == 0 {
+			t.Errorf("ModifiedSrc is empty for non-skipped mutant [%s] %s", m.Operator, m.Description)
 		}
 	}
 }

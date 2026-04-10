@@ -25,6 +25,17 @@ func (r *RemoveClause) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 		return nil, nil
 	}
 
+	// If replacing the value with nil would leave a locally-declared variable
+	// without any reads, the mutated code would not compile. Skip with a reason.
+	if wouldCauseUnusedVar(site) {
+		return []*Mutant{{
+			Site:        site,
+			Operator:    r.Name(),
+			Description: fmt.Sprintf("BoolQuery.%s → nil", site.Field),
+			SkipReason:  "removing this clause would leave a locally-declared variable unused",
+		}}, nil
+	}
+
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
 		kv.Value = ast.NewIdent("nil")
 	})
