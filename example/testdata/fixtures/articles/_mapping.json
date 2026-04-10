@@ -1,0 +1,11 @@
+{
+  "properties": {
+    "title": {
+      "type": "text",
+      "fields": {
+        "keyword": { "type": "keyword" }
+      }
+    },
+    "status": { "type": "keyword" }
+  }
+}

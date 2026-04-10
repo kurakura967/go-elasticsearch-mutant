@@ -1,0 +1,6 @@
+{
+  "properties": {
+    "category": { "type": "text"  },
+    "price":    { "type": "float" }
+  }
+}

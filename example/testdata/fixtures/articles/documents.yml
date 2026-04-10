@@ -1,0 +1,15 @@
+- _id: article-1
+  title: Go Programming
+  status: published
+
+- _id: article-2
+  title: Go Programming Guide
+  status: published
+
+- _id: article-3
+  title: Go Programming Tutorial
+  status: draft
+
+- _id: article-4
+  title: Python Programming
+  status: published

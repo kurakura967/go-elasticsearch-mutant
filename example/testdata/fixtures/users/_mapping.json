@@ -1,0 +1,8 @@
+{
+  "properties": {
+    "name":     { "type": "text"    },
+    "status":   { "type": "keyword" },
+    "email":    { "type": "keyword" },
+    "username": { "type": "keyword" }
+  }
+}

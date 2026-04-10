@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run unit tests
+        run: go test ./internal/...
+
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify Elasticsearch is up
+        run: curl -sf http://localhost:9200/_cluster/health | jq .
+
+      - name: Run example package tests
+        run: go test -v ./example/...
+        env:
+          ELASTICSEARCH_URL: http://localhost:9200
+
+      - name: Run E2E mutation pipeline
+        run: go test -tags e2e -v -timeout 10m ./e2e/...
+        env:
+          ELASTICSEARCH_URL: http://localhost:9200
+
+      - name: Run esmutant CLI (threshold 80%)
+        # --workers 1: avoid concurrent go test processes competing over the
+        # same ES indices (race between TestMain.Load and TestMain.Clean)
+        run: go run ./cmd/esmutant run ./example/... --threshold 80 --workers 1
+        env:
+          ELASTICSEARCH_URL: http://localhost:9200

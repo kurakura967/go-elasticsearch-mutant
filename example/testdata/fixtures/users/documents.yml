@@ -1,0 +1,29 @@
+- _id: user-1
+  name: Alice Smith
+  status: active
+  email: alice@example.com
+  username: alice_s
+
+- _id: user-2
+  name: Alice Brown
+  status: active
+  email: alice2@example.com
+  username: alice_b
+
+- _id: user-3
+  name: Alice Johnson
+  status: inactive
+  email: alice3@example.com
+  username: alice_j
+
+- _id: user-4
+  name: Bob Smith
+  status: active
+  email: bob@example.com
+  username: bob_s
+
+- _id: user-5
+  name: Carol White
+  status: active
+  email: carol@example.com
+  username: carol_w

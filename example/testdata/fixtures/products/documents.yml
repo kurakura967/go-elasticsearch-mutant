@@ -1,0 +1,23 @@
+- _id: product-1
+  category: electronics
+  price: 100.0
+
+- _id: product-2
+  category: electronics
+  price: 200.0
+
+- _id: product-3
+  category: electronics
+  price: 300.0
+
+- _id: product-4
+  category: electronics
+  price: 99.0
+
+- _id: product-5
+  category: electronics
+  price: 301.0
+
+- _id: product-6
+  category: clothing
+  price: 150.0
