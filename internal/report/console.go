@@ -9,14 +9,21 @@ import (
 )
 
 // PrintConsole writes the final mutation report to w.
-// When verbose is true, go test output is shown for non-killed mutants.
+// When verbose is true, go test output is shown for survived/errored mutants.
 func PrintConsole(w io.Writer, summary Summary, details []MutantDetail, verbose bool) {
+	// Score line
 	fmt.Fprintf(w, "\nMutation Score: %d/%d (%.1f%%)\n",
 		summary.Killed, summary.Total, summary.Score())
-	if summary.Skipped > 0 {
-		fmt.Fprintf(w, "Skipped: %d (not counted in score)\n", summary.Skipped)
-	}
 
+	// Breakdown so the denominator is self-explanatory
+	fmt.Fprintf(w, "  Killed: %d  Survived: %d  Timeouts: %d  Errors: %d",
+		summary.Killed, summary.Survived, summary.Timeouts, summary.Errors)
+	if summary.Skipped > 0 {
+		fmt.Fprintf(w, "  |  Skipped: %d (not counted in score)", summary.Skipped)
+	}
+	fmt.Fprintln(w)
+
+	printSection(w, "KILLED", runner.Killed, details, false)
 	printSection(w, "SURVIVED", runner.Survived, details, verbose)
 	if summary.Timeouts > 0 {
 		printSection(w, "TIMEOUT", runner.Timeout, details, verbose)
