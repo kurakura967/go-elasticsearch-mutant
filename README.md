@@ -46,9 +46,9 @@ esmutant run ./internal/repository/... \
 |------|-------|---------|-------------|
 | `--dir` | `-d` | `.` | Project root directory (where `go.mod` lives) |
 | `--test` | | *(same as pattern)* | Package pattern for running tests; use when tests are in a different package from the mutated code |
-| `--workers` | `-w` | `4` | Number of parallel workers |
+| `--workers` | `-w` | `1` | Number of parallel workers |
 | `--timeout` | `-t` | `30` | Per-test timeout in seconds |
-| `--threshold` | | `80.0` | Minimum mutation score (0–100); exits with code 1 if below |
+| `--threshold` | | `0` | Minimum mutation score (0–100); exits with code 1 if below (`0` = disabled) |
 | `--output` | `-o` | `console` | Output format: `console` or `json` |
 | `--verbose` | `-v` | `false` | Show `go test` output for survived/errored mutants |
 
@@ -59,25 +59,36 @@ Analyzing ./...
   Found 9 mutation target(s)
 
 Generating mutants...
-  example/search.go:41 BuildActiveUsersQuery    BoolQuery.Must → nil    [RemoveClause]
+  example/search.go:41 BuildActiveUsersQuery    BoolQuery.Must → nil        [RemoveClause]
+  example/search.go:41 BuildActiveUsersQuery    BoolQuery.Must → Should     [MustToShould]
   ...
-  13 mutant(s) total
+  15 mutant(s) total
 
-Running 13 mutant(s) (4 worker(s)) ...
+Running 15 mutant(s) (1 worker(s)) ...
 
 Mutation Score: 9/11 (81.8%)
-  Killed: 9  Survived: 2  Timeouts: 0  Errors: 0  |  Skipped: 2 (not counted in score)
+  Killed: 9  Survived: 2  Timeouts: 0  Errors: 0  |  Skipped: 4 (not counted in score)
 
 KILLED (9):
   example/search.go:41 BuildActiveUsersQuery    BoolQuery.Must → nil    [RemoveClause]
+    Detected by:
+      TestBuildActiveUsersQuery  ✗ failed
   ...
 
 SURVIVED (2):
   example/search.go:98 BuildArticlesQuery    BoolQuery.Must → Should    [MustToShould]
+    Tested by (all passed):
+      TestBuildActiveUsersQuery  ✓ passed
+      TestBuildPriceRangeQuery  ✓ passed
+      TestBuildArticlesQuery  ✓ passed
+      TestBuildUserByEmailQuery  ✓ passed
 
-SKIPPED (2):
+SKIPPED (4):
   example/search.go:48 BuildActiveUsersQuery    BoolQuery.Filter → Must    [FilterToMust]
     reason: BoolQuery already has a Must field; renaming Filter would create a duplicate struct key
+  example/search.go:80 BuildPriceRangeQuery     NumberRangeQuery.Gte → Lte  [RangeDirection]
+    reason: NumberRangeQuery already has a Lte field; renaming Gte would create a duplicate struct key
+  ...
 ```
 
 ## Supported Mutation Operators
@@ -132,6 +143,19 @@ Gte: &min      →    Gt: &min
 Lte: &max      →    Lt: &max
 ```
 
+### RangeDirection
+
+Swaps the direction of a range boundary (`Gte` ↔ `Lte`, `Gt` ↔ `Lt`), testing that tests verify the correct bound is used.
+
+Applies to: `NumberRangeQuery`, `DateRangeQuery`, `TermRangeQuery`, `UntypedRangeQuery`
+
+> **Note:** Automatically skipped when the target field already exists as a sibling (renaming would create a duplicate struct key, which is a compile error in Go).
+
+```go
+// Original          // Mutant
+Lte: &deadline →    Gte: &deadline
+```
+
 ### RemoveMustNot
 
 Sets `BoolQuery.MustNot` to `nil`, testing that exclusion conditions are enforced by tests.
@@ -142,6 +166,24 @@ MustNot: []types.Query{{Term: ...}}
 
 // Mutant
 MustNot: nil
+```
+
+### RemoveFunctionScoreFilter
+
+Sets `FunctionScore.Filter` to `nil`, testing that weight boosts are correctly scoped to matching documents and not applied globally.
+
+```go
+// Original
+types.FunctionScore{
+    Filter: &types.Query{Term: types.Term{GenderId: gender}},
+    Weight: &weight,
+}
+
+// Mutant
+types.FunctionScore{
+    Filter: nil,
+    Weight: &weight,
+}
 ```
 
 ## How It Works
@@ -156,4 +198,5 @@ The mutation score is `killed / (killed + survived + timeouts + errors) × 100`.
 ## Notes
 
 - Mutations are applied via [`go test -overlay`](https://pkg.go.dev/cmd/go#hdr-Compile_and_run_Go_program), so original source files are never modified.
-- If your tests share Elasticsearch indices across parallel runs (e.g., via `TestMain`), use `--workers 1` to avoid race conditions.
+- `--workers` defaults to `1`. Integration tests that share Elasticsearch indices across parallel runs will produce false positives (mutations appear killed when they are not) if multiple workers run concurrently. Increase workers only when your test suite is known to be safe under concurrent execution.
+- `--threshold` defaults to `0` (disabled). Set an explicit value (e.g. `--threshold 80`) to fail the run when the mutation score drops below that percentage.

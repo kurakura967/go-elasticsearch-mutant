@@ -12,7 +12,9 @@ var DefaultOperators = []Operator{
 	&MustToShould{},
 	&FilterToMust{},
 	&RangeBoundary{},
+	&RangeDirection{},
 	&RemoveMustNot{},
+	&RemoveFunctionScoreFilter{},
 }
 
 // Generate applies all operators to all sites and returns mutants with sequential IDs.

@@ -39,9 +39,9 @@ func newRunCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&opts.dir, "dir", "d", ".", "project root directory (where go.mod lives)")
 	cmd.Flags().StringVar(&opts.testPattern, "test", "", "package pattern for running tests (defaults to [pattern] when empty)")
-	cmd.Flags().IntVarP(&opts.workers, "workers", "w", 4, "number of parallel workers")
+	cmd.Flags().IntVarP(&opts.workers, "workers", "w", 1, "number of parallel workers")
 	cmd.Flags().IntVarP(&opts.timeoutSec, "timeout", "t", 30, "per-test timeout in seconds")
-	cmd.Flags().Float64Var(&opts.threshold, "threshold", 80.0, "minimum mutation score (0-100); exit 1 if below")
+	cmd.Flags().Float64Var(&opts.threshold, "threshold", 0, "minimum mutation score (0-100); exit 1 if below (0 = disabled)")
 	cmd.Flags().StringVarP(&opts.output, "output", "o", "console", "output format: console or json")
 	cmd.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "show test output for non-killed mutants")
 
@@ -54,6 +54,11 @@ func runMutation(ctx context.Context, pattern string, opts runOptions) error {
 		return fmt.Errorf("resolve dir: %w", err)
 	}
 	timeout := time.Duration(opts.timeoutSec) * time.Second
+
+	// Warn when parallel workers may cause false positives with shared ES indices.
+	if opts.workers >= 2 {
+		fmt.Fprintf(os.Stdout, "Warning: --workers %d with shared Elasticsearch indices may cause false positives. Use --workers 1 for integration tests.\n\n", opts.workers)
+	}
 
 	// Resolve test pattern: defaults to source pattern when not specified.
 	testPattern := opts.testPattern
@@ -111,7 +116,7 @@ func runMutation(ctx context.Context, pattern string, opts runOptions) error {
 		return report.PrintJSON(os.Stdout, summary, details)
 	default:
 		report.PrintConsole(os.Stdout, summary, details, opts.verbose)
-		if summary.Score() < opts.threshold {
+		if opts.threshold > 0 && summary.Score() < opts.threshold {
 			return fmt.Errorf("mutation score %.1f%% is below threshold %.1f%%",
 				summary.Score(), opts.threshold)
 		}

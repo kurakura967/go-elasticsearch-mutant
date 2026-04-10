@@ -61,6 +61,36 @@ func build() {
 }
 `
 
+// rangeGteOnlySrc has only Gte (no Lte sibling) for RangeDirection tests.
+const rangeGteOnlySrc = `package test
+
+func build() {
+	_ = NumberRangeQuery{
+		Gte: &min,
+	}
+}
+`
+
+// rangeLteOnlySrc has only Lte (no Gte sibling) for RangeDirection tests.
+const rangeLteOnlySrc = `package test
+
+func build() {
+	_ = NumberRangeQuery{
+		Lte: &max,
+	}
+}
+`
+
+const functionScoreSrc = `package test
+
+func build() {
+	_ = FunctionScore{
+		Filter: someQuery(),
+		Weight: &w,
+	}
+}
+`
+
 // --- helpers ---
 
 // writeFixture writes src to a temp file and returns its path.
@@ -412,4 +442,107 @@ func TestGenerate_Metadata(t *testing.T) {
 			t.Errorf("ModifiedSrc is empty for non-skipped mutant [%s] %s", m.Operator, m.Description)
 		}
 	}
+}
+
+func TestRangeDirection(t *testing.T) {
+	t.Run("Gte_to_Lte", func(t *testing.T) {
+		f := writeFixture(t, rangeGteOnlySrc)
+		ms, err := (&mutant.RangeDirection{}).Apply(makeSite(f, rangeGteOnlySrc, "Gte", "NumberRangeQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason != "" {
+			t.Fatalf("expected non-skipped mutant, got skip reason: %s", ms[0].SkipReason)
+		}
+		got := string(ms[0].ModifiedSrc)
+		if !hasField(got, "Lte") {
+			t.Errorf("expected Lte field in output:\n%s", got)
+		}
+		if hasField(got, "Gte") {
+			t.Errorf("unexpected Gte field still present:\n%s", got)
+		}
+	})
+
+	t.Run("Lte_to_Gte", func(t *testing.T) {
+		f := writeFixture(t, rangeLteOnlySrc)
+		ms, err := (&mutant.RangeDirection{}).Apply(makeSite(f, rangeLteOnlySrc, "Lte", "NumberRangeQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		got := string(ms[0].ModifiedSrc)
+		if !hasField(got, "Gte") {
+			t.Errorf("expected Gte field in output:\n%s", got)
+		}
+		if hasField(got, "Lte") {
+			t.Errorf("unexpected Lte field still present:\n%s", got)
+		}
+	})
+
+	t.Run("skip_when_sibling_exists", func(t *testing.T) {
+		// rangeSrc has both Gte and Lte → guard should trigger.
+		f := writeFixture(t, rangeSrc)
+		ms, err := (&mutant.RangeDirection{}).Apply(makeSite(f, rangeSrc, "Gte", "NumberRangeQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 skipped mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason == "" {
+			t.Errorf("expected SkipReason to be set, got empty")
+		}
+		if ms[0].ModifiedSrc != nil {
+			t.Errorf("expected ModifiedSrc to be nil for skipped mutant")
+		}
+	})
+
+	t.Run("skip_BoolQuery", func(t *testing.T) {
+		f := writeFixture(t, boolSrc)
+		ms, _ := (&mutant.RangeDirection{}).Apply(makeSite(f, boolSrc, "Must", "BoolQuery"))
+		if len(ms) != 0 {
+			t.Errorf("RangeDirection must not apply to BoolQuery, got %d mutant(s)", len(ms))
+		}
+	})
+}
+
+func TestRemoveFunctionScoreFilter(t *testing.T) {
+	t.Run("Filter_to_nil", func(t *testing.T) {
+		f := writeFixture(t, functionScoreSrc)
+		ms, err := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, functionScoreSrc, "Filter", "FunctionScore"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason != "" {
+			t.Fatalf("expected non-skipped mutant, got skip reason: %s", ms[0].SkipReason)
+		}
+		got := string(ms[0].ModifiedSrc)
+		if !isNilField(got, "Filter") {
+			t.Errorf("Filter: want nil value, got:\n%s", got)
+		}
+	})
+
+	t.Run("skip_non_FunctionScore", func(t *testing.T) {
+		f := writeFixture(t, boolSrc)
+		ms, _ := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, boolSrc, "Filter", "BoolQuery"))
+		if len(ms) != 0 {
+			t.Errorf("RemoveFunctionScoreFilter must not apply to BoolQuery, got %d mutant(s)", len(ms))
+		}
+	})
+
+	t.Run("skip_non_Filter_field", func(t *testing.T) {
+		f := writeFixture(t, functionScoreSrc)
+		ms, _ := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, functionScoreSrc, "Weight", "FunctionScore"))
+		if len(ms) != 0 {
+			t.Errorf("RemoveFunctionScoreFilter must not apply to Weight, got %d mutant(s)", len(ms))
+		}
+	})
 }
