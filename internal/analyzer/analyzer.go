@@ -63,53 +63,92 @@ func (a *Analyzer) Analyze(pattern string) ([]*CallSite, error) {
 func extractCallSites(fset *token.FileSet, info *gotypes.Info, file *ast.File) []*CallSite {
 	var callSites []*CallSite
 
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
+	// funcStack tracks the name of enclosing FuncDecl/FuncLit as we descend.
+	// ast.Inspect has no "on-exit" hook, so we use a stack updated on entry
+	// and detect exits by checking whether we returned to a shallower depth.
+	var funcStack []string
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == nil {
+			// ast.Inspect calls f(nil) on exit — pop the stack if we pushed.
+			// We can't distinguish which node is exiting, so we manage depth
+			// via the FuncDecl/FuncLit entry points below.
+			return false
+		}
+
+		switch v := n.(type) {
+		case *ast.FuncDecl:
+			funcStack = append(funcStack, v.Name.Name)
+			ast.Inspect(v.Body, func(inner ast.Node) bool {
+				return inspectNode(inner, fset, info, funcStack, &callSites)
+			})
+			funcStack = funcStack[:len(funcStack)-1]
+			return false // already handled body above
+		case *ast.GenDecl:
+			// Package-level var/const: inspect with no enclosing function name.
+			for _, spec := range v.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, val := range vs.Values {
+					ast.Inspect(val, func(inner ast.Node) bool {
+						return inspectNode(inner, fset, info, funcStack, &callSites)
+					})
+				}
+			}
+			return false
+		}
+		return true
+	})
+
+	return callSites
+}
+
+func inspectNode(n ast.Node, fset *token.FileSet, info *gotypes.Info, funcStack []string, callSites *[]*CallSite) bool {
+	if n == nil {
+		return false
+	}
+	cl, ok := n.(*ast.CompositeLit)
+	if !ok {
+		return true
+	}
+
+	structName, ok := esStructName(info, cl)
+	if !ok {
+		return true
+	}
+
+	funcName := ""
+	if len(funcStack) > 0 {
+		funcName = funcStack[len(funcStack)-1]
+	}
+
+	for _, elt := range cl.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
 			continue
 		}
-		funcName := fn.Name.Name
+		ident, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if !targetFields[ident.Name] {
+			continue
+		}
 
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			cl, ok := n.(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
-
-			structName, ok := esStructName(info, cl)
-			if !ok {
-				return true
-			}
-
-			for _, elt := range cl.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				ident, ok := kv.Key.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				if !targetFields[ident.Name] {
-					continue
-				}
-
-				pos := fset.Position(kv.Pos())
-				callSites = append(callSites, &CallSite{
-					File:     pos.Filename,
-					Line:     pos.Line,
-					NodeType: structName,
-					Field:    ident.Name,
-					FuncName: funcName,
-					Node:     kv,
-				})
-			}
-
-			return true
+		pos := fset.Position(kv.Pos())
+		*callSites = append(*callSites, &CallSite{
+			File:     pos.Filename,
+			Line:     pos.Line,
+			NodeType: structName,
+			Field:    ident.Name,
+			FuncName: funcName,
+			Node:     kv,
 		})
 	}
 
-	return callSites
+	return true
 }
 
 // esStructName returns the struct name if cl is a composite literal of an ES types struct.
