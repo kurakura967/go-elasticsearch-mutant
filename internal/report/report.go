@@ -34,8 +34,9 @@ type MutantDetail struct {
 	Description string
 	File        string // path relative to projectDir
 	Line        int
-	FuncName    string // enclosing function name
-	Output      string // go test output (non-empty when verbose)
+	FuncName    string             // enclosing function name
+	Output      string             // go test output (non-empty when verbose)
+	TestResults []runner.TestResult // per-test pass/fail outcomes
 }
 
 // Build correlates mutants with their results.
@@ -67,7 +68,7 @@ func Build(projectDir string, mutants []*mutant.Mutant, results []runner.Result)
 			summary.Skipped++
 		}
 
-		d := MutantDetail{ID: r.MutantID, Status: r.Status, Output: r.Output}
+		d := MutantDetail{ID: r.MutantID, Status: r.Status, Output: r.Output, TestResults: r.TestResults}
 		if m := byID[r.MutantID]; m != nil {
 			d.Operator = m.Operator
 			d.Description = m.Description

@@ -30,7 +30,8 @@ func (s Status) String() string {
 
 // Result holds the outcome of running a single mutant.
 type Result struct {
-	MutantID int
-	Status   Status
-	Output   string // combined stdout/stderr from go test
+	MutantID    int
+	Status      Status
+	Output      string       // human-readable go test output
+	TestResults []TestResult // per-test pass/fail outcomes parsed from go test -json
 }

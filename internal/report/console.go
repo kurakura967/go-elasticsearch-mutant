@@ -8,6 +8,32 @@ import (
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/runner"
 )
 
+// printTestResults prints the test function names that ran for a mutant.
+// For KILLED mutants it shows only the leaf-level failing tests.
+// For SURVIVED mutants it shows only top-level passing tests.
+func printTestResults(w io.Writer, d MutantDetail) {
+	switch d.Status {
+	case runner.Killed:
+		leaves := runner.LeafFailures(d.TestResults)
+		if len(leaves) == 0 {
+			return
+		}
+		fmt.Fprintf(w, "    Detected by:\n")
+		for _, tr := range leaves {
+			fmt.Fprintf(w, "      %s  ✗ failed\n", tr.Name)
+		}
+	case runner.Survived:
+		top := runner.TopLevelPassing(d.TestResults)
+		if len(top) == 0 {
+			return
+		}
+		fmt.Fprintf(w, "    Tested by (all passed):\n")
+		for _, tr := range top {
+			fmt.Fprintf(w, "      %s  ✓ passed\n", tr.Name)
+		}
+	}
+}
+
 // PrintConsole writes the final mutation report to w.
 // When verbose is true, go test output is shown for survived/errored mutants.
 func PrintConsole(w io.Writer, summary Summary, details []MutantDetail, verbose bool) {
@@ -67,6 +93,7 @@ func printSection(w io.Writer, title string, status runner.Status, details []Mut
 	fmt.Fprintf(w, "\n%s (%d):\n", title, len(items))
 	for _, d := range items {
 		fmt.Fprintf(w, "  %s:%d %s\t%-40s [%s]\n", d.File, d.Line, d.FuncName, d.Description, d.Operator)
+		printTestResults(w, d)
 		if verbose && d.Output != "" {
 			for _, line := range strings.Split(strings.TrimRight(d.Output, "\n"), "\n") {
 				fmt.Fprintf(w, "    %s\n", line)
