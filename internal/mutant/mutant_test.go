@@ -91,6 +91,71 @@ func build() {
 }
 `
 
+// functionScoreWithImportSrc uses a package-qualified value exclusively inside Filter,
+// so removing Filter would leave the import unused.
+const functionScoreWithImportSrc = `package test
+
+import "mypkg"
+
+func build() {
+	_ = FunctionScore{
+		Filter: mypkg.Query(),
+		Weight: &w,
+	}
+}
+`
+
+// functionScoreMultiUseImportSrc uses mypkg both inside Filter and outside,
+// so removing Filter would NOT leave the import unused.
+const functionScoreMultiUseImportSrc = `package test
+
+import "mypkg"
+
+func build() {
+	extra := mypkg.Other()
+	_ = FunctionScore{
+		Filter: mypkg.Query(),
+		Weight: &w,
+	}
+	_ = extra
+}
+`
+
+// multiMatchBestfieldsSrc has MultiMatchQuery with Bestfields type.
+const multiMatchBestfieldsSrc = `package test
+
+import "textquerytype"
+
+func build() {
+	_ = MultiMatchQuery{
+		Type: &textquerytype.Bestfields,
+	}
+}
+`
+
+// multiMatchPhraseSrc has MultiMatchQuery with Phrase type (not Bestfields).
+const multiMatchPhraseSrc = `package test
+
+import "textquerytype"
+
+func build() {
+	_ = MultiMatchQuery{
+		Type: &textquerytype.Phrase,
+	}
+}
+`
+
+// shouldOnlySrc has Should but no Filter, for ShouldToFilter tests.
+const shouldOnlySrc = `package test
+
+func build() {
+	_ = BoolQuery{
+		Should:  foo(),
+		MustNot: baz(),
+	}
+}
+`
+
 // --- helpers ---
 
 // writeFixture writes src to a temp file and returns its path.
@@ -530,6 +595,37 @@ func TestRemoveFunctionScoreFilter(t *testing.T) {
 		}
 	})
 
+	t.Run("skip_unused_import", func(t *testing.T) {
+		f := writeFixture(t, functionScoreWithImportSrc)
+		ms, err := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, functionScoreWithImportSrc, "Filter", "FunctionScore"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 skipped mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason == "" {
+			t.Errorf("expected SkipReason to be set, got empty")
+		}
+		if ms[0].ModifiedSrc != nil {
+			t.Errorf("expected ModifiedSrc to be nil for skipped mutant")
+		}
+	})
+
+	t.Run("no_skip_when_import_used_elsewhere", func(t *testing.T) {
+		f := writeFixture(t, functionScoreMultiUseImportSrc)
+		ms, err := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, functionScoreMultiUseImportSrc, "Filter", "FunctionScore"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason != "" {
+			t.Errorf("expected non-skipped mutant, got skip reason: %s", ms[0].SkipReason)
+		}
+	})
+
 	t.Run("skip_non_FunctionScore", func(t *testing.T) {
 		f := writeFixture(t, boolSrc)
 		ms, _ := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, boolSrc, "Filter", "BoolQuery"))
@@ -543,6 +639,116 @@ func TestRemoveFunctionScoreFilter(t *testing.T) {
 		ms, _ := (&mutant.RemoveFunctionScoreFilter{}).Apply(makeSite(f, functionScoreSrc, "Weight", "FunctionScore"))
 		if len(ms) != 0 {
 			t.Errorf("RemoveFunctionScoreFilter must not apply to Weight, got %d mutant(s)", len(ms))
+		}
+	})
+}
+
+func TestShouldToFilter(t *testing.T) {
+	t.Run("Should_to_Filter", func(t *testing.T) {
+		f := writeFixture(t, shouldOnlySrc)
+		ms, err := (&mutant.ShouldToFilter{}).Apply(makeSite(f, shouldOnlySrc, "Should", "BoolQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason != "" {
+			t.Fatalf("expected non-skipped mutant, got skip reason: %s", ms[0].SkipReason)
+		}
+		got := string(ms[0].ModifiedSrc)
+		if !hasField(got, "Filter") {
+			t.Errorf("expected Filter field in output:\n%s", got)
+		}
+		if hasField(got, "Should") {
+			t.Errorf("unexpected Should field still present:\n%s", got)
+		}
+	})
+
+	t.Run("skip_when_Filter_sibling_exists", func(t *testing.T) {
+		// boolSrc has both Should and Filter → guard should trigger.
+		f := writeFixture(t, boolSrc)
+		ms, err := (&mutant.ShouldToFilter{}).Apply(makeSite(f, boolSrc, "Should", "BoolQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 1 {
+			t.Fatalf("want 1 skipped mutant, got %d", len(ms))
+		}
+		if ms[0].SkipReason == "" {
+			t.Errorf("expected SkipReason to be set, got empty")
+		}
+	})
+
+	t.Run("inapplicable_Must", func(t *testing.T) {
+		f := writeFixture(t, boolSrc)
+		ms, _ := (&mutant.ShouldToFilter{}).Apply(makeSite(f, boolSrc, "Must", "BoolQuery"))
+		if len(ms) != 0 {
+			t.Errorf("ShouldToFilter must not apply to Must, got %d mutant(s)", len(ms))
+		}
+	})
+
+	t.Run("inapplicable_non_BoolQuery", func(t *testing.T) {
+		f := writeFixture(t, boolSrc)
+		ms, _ := (&mutant.ShouldToFilter{}).Apply(makeSite(f, boolSrc, "Should", "OtherQuery"))
+		if len(ms) != 0 {
+			t.Errorf("ShouldToFilter must not apply to non-BoolQuery, got %d mutant(s)", len(ms))
+		}
+	})
+}
+
+func TestMultiMatchType(t *testing.T) {
+	t.Run("Bestfields_generates_two_mutants", func(t *testing.T) {
+		f := writeFixture(t, multiMatchBestfieldsSrc)
+		ms, err := (&mutant.MultiMatchType{}).Apply(makeSite(f, multiMatchBestfieldsSrc, "Type", "MultiMatchQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(ms) != 2 {
+			t.Fatalf("want 2 mutants (Phrase + Mostfields), got %d", len(ms))
+		}
+		descriptions := map[string]bool{}
+		for _, m := range ms {
+			descriptions[m.Description] = true
+			if m.SkipReason != "" {
+				t.Errorf("expected non-skipped mutant, got skip reason: %s", m.SkipReason)
+			}
+		}
+		if !descriptions["MultiMatchQuery.Type: Bestfields → Phrase"] {
+			t.Error("expected mutant for Phrase")
+		}
+		if !descriptions["MultiMatchQuery.Type: Bestfields → Mostfields"] {
+			t.Error("expected mutant for Mostfields")
+		}
+	})
+
+	t.Run("Phrase_value_skipped", func(t *testing.T) {
+		f := writeFixture(t, multiMatchPhraseSrc)
+		ms, _ := (&mutant.MultiMatchType{}).Apply(makeSite(f, multiMatchPhraseSrc, "Type", "MultiMatchQuery"))
+		if len(ms) != 0 {
+			t.Errorf("MultiMatchType must not apply to non-Bestfields, got %d mutant(s)", len(ms))
+		}
+	})
+
+	t.Run("inapplicable_non_MultiMatchQuery", func(t *testing.T) {
+		f := writeFixture(t, multiMatchBestfieldsSrc)
+		ms, _ := (&mutant.MultiMatchType{}).Apply(makeSite(f, multiMatchBestfieldsSrc, "Type", "OtherQuery"))
+		if len(ms) != 0 {
+			t.Errorf("MultiMatchType must not apply to non-MultiMatchQuery, got %d mutant(s)", len(ms))
+		}
+	})
+
+	t.Run("mutated_src_contains_target_type", func(t *testing.T) {
+		f := writeFixture(t, multiMatchBestfieldsSrc)
+		ms, err := (&mutant.MultiMatchType{}).Apply(makeSite(f, multiMatchBestfieldsSrc, "Type", "MultiMatchQuery"))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		for _, m := range ms {
+			got := string(m.ModifiedSrc)
+			if hasField(got, "Bestfields") {
+				t.Errorf("Bestfields should be replaced in mutant:\n%s", got)
+			}
 		}
 	})
 }

@@ -21,6 +21,7 @@ var targetFields = map[string]bool{
 	"Gt":      true,
 	"Lte":     true,
 	"Lt":      true,
+	"Type":    true,
 }
 
 // Analyzer analyzes Go packages and extracts ES Typed API call sites.

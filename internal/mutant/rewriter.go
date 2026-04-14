@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"strings"
 
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/analyzer"
 )
@@ -169,6 +170,124 @@ func wouldCauseUnusedVar(site *analyzer.CallSite) bool {
 		})
 		// outside == 1 means only the declaration remains → variable unused after removal.
 		if outside <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// wouldCauseUnusedImport reports whether replacing the value of the field at site
+// with nil would leave any imported package unused in the file.
+// This prevents mutations that produce "imported and not used" compile errors.
+func wouldCauseUnusedImport(site *analyzer.CallSite) bool {
+	src, err := os.ReadFile(site.File)
+	if err != nil {
+		return false
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, site.File, src, 0)
+	if err != nil {
+		return false
+	}
+
+	// Find the target KV node.
+	var targetKV *ast.KeyValueExpr
+	ast.Inspect(f, func(n ast.Node) bool {
+		if targetKV != nil {
+			return false
+		}
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		id, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if fset.Position(kv.Pos()).Line == site.Line && id.Name == site.Field {
+			targetKV = kv
+			return false
+		}
+		return true
+	})
+	if targetKV == nil {
+		return false
+	}
+
+	// Build a map of import local name → true for all named imports.
+	importedPkgs := map[string]bool{}
+	for _, imp := range f.Imports {
+		if imp.Name != nil {
+			// Aliased import (including "_" and "."); skip blank/dot imports.
+			if imp.Name.Name != "_" && imp.Name.Name != "." {
+				importedPkgs[imp.Name.Name] = true
+			}
+			continue
+		}
+		// Unaliased: local name is the last path component, stripping any
+		// version suffix (e.g. "yaml.v3" → "yaml").
+		path := strings.Trim(imp.Path.Value, `"`)
+		if i := strings.LastIndex(path, "/"); i >= 0 {
+			path = path[i+1:]
+		}
+		if i := strings.Index(path, "."); i >= 0 {
+			path = path[:i]
+		}
+		importedPkgs[path] = true
+	}
+	if len(importedPkgs) == 0 {
+		return false
+	}
+
+	// Collect package qualifiers (SelectorExpr.X) used inside the value being removed.
+	valueStart := targetKV.Value.Pos()
+	valueEnd := targetKV.Value.End()
+
+	pkgsInValue := map[string]bool{}
+	ast.Inspect(targetKV.Value, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if importedPkgs[id.Name] {
+			pkgsInValue[id.Name] = true
+		}
+		return true
+	})
+	if len(pkgsInValue) == 0 {
+		return false
+	}
+
+	// For each such package, count uses as a SelectorExpr qualifier outside the value range.
+	// A count of 0 means the package is only used inside the value being removed → unused after removal.
+	for pkgName := range pkgsInValue {
+		outside := 0
+		ast.Inspect(f, func(n ast.Node) bool {
+			if n == nil {
+				return false
+			}
+			// Skip the value subtree being replaced.
+			if n.Pos() >= valueStart && n.End() <= valueEnd {
+				return false
+			}
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			id, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if id.Name == pkgName {
+				outside++
+			}
+			return true
+		})
+		if outside == 0 {
 			return true
 		}
 	}

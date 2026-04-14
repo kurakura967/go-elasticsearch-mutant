@@ -10,11 +10,13 @@ import (
 var DefaultOperators = []Operator{
 	&RemoveClause{},
 	&MustToShould{},
+	&ShouldToFilter{},
 	&FilterToMust{},
 	&RangeBoundary{},
 	&RangeDirection{},
 	&RemoveMustNot{},
 	&RemoveFunctionScoreFilter{},
+	&MultiMatchType{},
 }
 
 // Generate applies all operators to all sites and returns mutants with sequential IDs.

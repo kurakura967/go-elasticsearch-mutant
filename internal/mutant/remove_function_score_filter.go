@@ -27,6 +27,15 @@ func (r *RemoveFunctionScoreFilter) Apply(site *analyzer.CallSite) ([]*Mutant, e
 		}}, nil
 	}
 
+	if wouldCauseUnusedImport(site) {
+		return []*Mutant{{
+			Site:        site,
+			Operator:    r.Name(),
+			Description: "FunctionScore.Filter → nil",
+			SkipReason:  "removing this filter would leave an imported package unused",
+		}}, nil
+	}
+
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
 		kv.Value = ast.NewIdent("nil")
 	})

@@ -120,6 +120,17 @@ Renames `BoolQuery.Must` to `Should`, testing that tests distinguish between req
 Must: []types.Query  →  Should: []types.Query
 ```
 
+### ShouldToFilter
+
+Renames `BoolQuery.Should` to `Filter`, testing that tests distinguish between scoring (`Should`) and non-scoring (`Filter`) clauses. Useful for catching bugs where a relevance-boosting clause is mistakenly placed in a filter context.
+
+> **Note:** Automatically skipped when the same `BoolQuery` already contains a `Filter` field (renaming would create a duplicate struct key, which is a compile error in Go).
+
+```go
+// Original          // Mutant
+Should: []types.Query  →  Filter: []types.Query
+```
+
 ### FilterToMust
 
 Renames `BoolQuery.Filter` to `Must`, testing whether tests detect the difference between a non-scoring filter and a scoring must clause.
@@ -172,6 +183,8 @@ MustNot: nil
 
 Sets `FunctionScore.Filter` to `nil`, testing that weight boosts are correctly scoped to matching documents and not applied globally.
 
+> **Note:** Automatically skipped when removing the `Filter` value would leave a locally-declared variable or an imported package unused (would produce a compile error).
+
 ```go
 // Original
 types.FunctionScore{
@@ -186,6 +199,25 @@ types.FunctionScore{
 }
 ```
 
+### MultiMatchType
+
+Replaces `MultiMatchQuery.Type` from `Bestfields` to alternative match types (`Phrase`, `Mostfields`), testing that tests verify the correct multi-match behavior. Generates one mutant per alternative type.
+
+Only applied when the current value is `Bestfields` (the most common default). `Phrase` and `Mostfields` are chosen because they produce meaningfully different matching behavior that integration tests can detect.
+
+```go
+// Original
+MultiMatch: &types.MultiMatchQuery{
+    Type: &textquerytype.Bestfields,
+}
+
+// Mutant 1
+Type: &textquerytype.Phrase
+
+// Mutant 2
+Type: &textquerytype.Mostfields
+```
+
 ## How It Works
 
 1. **Analyze** — Loads your Go packages and finds all Typed API struct field assignments that are mutation targets.
@@ -198,5 +230,5 @@ The mutation score is `killed / (killed + survived + timeouts + errors) × 100`.
 ## Notes
 
 - Mutations are applied via [`go test -overlay`](https://pkg.go.dev/cmd/go#hdr-Compile_and_run_Go_program), so original source files are never modified.
-- `--workers` defaults to `1`. Integration tests that share Elasticsearch indices across parallel runs will produce false positives (mutations appear killed when they are not) if multiple workers run concurrently. Increase workers only when your test suite is known to be safe under concurrent execution.
+- `--workers` defaults to `1`. Integration tests that share Elasticsearch indices across parallel runs will produce false positives (mutations appear killed when they are not) if multiple workers run concurrently. Increase workers only when your test suite is known to be safe under concurrent execution. To avoid the issue entirely, consider giving each test run a unique index name (e.g. by appending a UUID in `TestMain`).
 - `--threshold` defaults to `0` (disabled). Set an explicit value (e.g. `--threshold 80`) to fail the run when the mutation score drops below that percentage.
