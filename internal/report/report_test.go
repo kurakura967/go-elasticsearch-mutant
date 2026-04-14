@@ -129,6 +129,111 @@ func TestPrintConsole_NoSurvivedSection_WhenAllKilled(t *testing.T) {
 	}
 }
 
+// --- BuildTestContribution tests ---
+
+func TestBuildTestContribution_ZeroKillTests(t *testing.T) {
+	mutants := makeMutants()
+	results := []runner.Result{
+		{MutantID: 1, Status: runner.Killed, TestResults: []runner.TestResult{
+			{Name: "TestA", Passed: false},
+			{Name: "TestB", Passed: true},
+		}},
+		{MutantID: 2, Status: runner.Survived, TestResults: []runner.TestResult{
+			{Name: "TestA", Passed: true},
+			{Name: "TestB", Passed: true},
+			{Name: "TestC", Passed: true},
+		}},
+		{MutantID: 3, Status: runner.Survived, TestResults: []runner.TestResult{
+			{Name: "TestB", Passed: true},
+			{Name: "TestC", Passed: true},
+		}},
+	}
+	sum, details := report.Build("/proj", mutants, results)
+	tc := report.BuildTestContribution(sum, details)
+
+	if tc.TotalTestCases != 3 {
+		t.Errorf("TotalTestCases: got %d, want 3", tc.TotalTestCases)
+	}
+	if tc.TotalMutants != 3 {
+		t.Errorf("TotalMutants: got %d, want 3", tc.TotalMutants)
+	}
+	// TestA killed mutant 1 → not zero-kill
+	// TestB and TestC never appeared as failing in a Killed result → zero-kill
+	if len(tc.ZeroKillTests) != 2 {
+		t.Errorf("ZeroKillTests: got %v, want [TestB TestC]", tc.ZeroKillTests)
+	}
+	for _, name := range tc.ZeroKillTests {
+		if name == "TestA" {
+			t.Errorf("TestA should not be in ZeroKillTests (it killed mutant 1)")
+		}
+	}
+}
+
+func TestBuildTestContribution_AllContribute(t *testing.T) {
+	mutants := makeMutants()[:2]
+	results := []runner.Result{
+		{MutantID: 1, Status: runner.Killed, TestResults: []runner.TestResult{
+			{Name: "TestA", Passed: false},
+		}},
+		{MutantID: 2, Status: runner.Killed, TestResults: []runner.TestResult{
+			{Name: "TestB", Passed: false},
+		}},
+	}
+	sum, details := report.Build("/proj", mutants, results)
+	tc := report.BuildTestContribution(sum, details)
+
+	if len(tc.ZeroKillTests) != 0 {
+		t.Errorf("ZeroKillTests: expected empty, got %v", tc.ZeroKillTests)
+	}
+}
+
+func TestBuildTestContribution_NoTestResults(t *testing.T) {
+	sum, details := report.Build("/proj", makeMutants(), makeResults())
+	tc := report.BuildTestContribution(sum, details)
+
+	if tc.TotalTestCases != 0 {
+		t.Errorf("TotalTestCases: got %d, want 0 (no TestResults in fixtures)", tc.TotalTestCases)
+	}
+}
+
+func TestPrintConsole_ScoreExplanation(t *testing.T) {
+	sum, details := report.Build("/proj", makeMutants(), makeResults())
+	var buf bytes.Buffer
+	report.PrintConsole(&buf, sum, details, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "Score = Killed") {
+		t.Errorf("expected score formula in output:\n%s", out)
+	}
+}
+
+func TestPrintConsole_TestContributionSection(t *testing.T) {
+	mutants := makeMutants()
+	results := []runner.Result{
+		{MutantID: 1, Status: runner.Killed, TestResults: []runner.TestResult{
+			{Name: "TestA", Passed: false},
+		}},
+		{MutantID: 2, Status: runner.Survived, TestResults: []runner.TestResult{
+			{Name: "TestA", Passed: true},
+			{Name: "TestNoKill", Passed: true},
+		}},
+		{MutantID: 3, Status: runner.Survived, TestResults: []runner.TestResult{
+			{Name: "TestNoKill", Passed: true},
+		}},
+	}
+	sum, details := report.Build("/proj", mutants, results)
+	var buf bytes.Buffer
+	report.PrintConsole(&buf, sum, details, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "Test Contribution Summary") {
+		t.Errorf("expected 'Test Contribution Summary' in output:\n%s", out)
+	}
+	if !strings.Contains(out, "TestNoKill") {
+		t.Errorf("expected 'TestNoKill' in zero-kill list:\n%s", out)
+	}
+}
+
 // --- PrintJSON tests ---
 
 func TestPrintJSON_ValidJSON(t *testing.T) {

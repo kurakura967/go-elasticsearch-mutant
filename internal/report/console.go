@@ -40,12 +40,16 @@ func PrintConsole(w io.Writer, summary Summary, details []MutantDetail, verbose 
 	// Score line
 	fmt.Fprintf(w, "\nMutation Score: %d/%d (%.1f%%)\n",
 		summary.Killed, summary.Total, summary.Score())
+	fmt.Fprintf(w, "  Score = Killed / (Killed + Survived + Timeouts + Errors)\n")
+	if summary.Skipped > 0 {
+		fmt.Fprintf(w, "  Skipped mutants are excluded from the score.\n")
+	}
 
 	// Breakdown so the denominator is self-explanatory
 	fmt.Fprintf(w, "  Killed: %d  Survived: %d  Timeouts: %d  Errors: %d",
 		summary.Killed, summary.Survived, summary.Timeouts, summary.Errors)
 	if summary.Skipped > 0 {
-		fmt.Fprintf(w, "  |  Skipped: %d (not counted in score)", summary.Skipped)
+		fmt.Fprintf(w, "  |  Skipped: %d", summary.Skipped)
 	}
 	fmt.Fprintln(w)
 
@@ -59,6 +63,25 @@ func PrintConsole(w io.Writer, summary Summary, details []MutantDetail, verbose 
 	}
 	if summary.Skipped > 0 {
 		printSkippedSection(w, details)
+	}
+
+	tc := BuildTestContribution(summary, details)
+	printTestContribution(w, tc)
+}
+
+func printTestContribution(w io.Writer, tc TestContribution) {
+	if tc.TotalTestCases == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\nTest Contribution Summary:\n")
+	fmt.Fprintf(w, "  %d test case(s) ran / %d mutant(s) evaluated\n", tc.TotalTestCases, tc.TotalMutants)
+	if len(tc.ZeroKillTests) == 0 {
+		fmt.Fprintf(w, "  All test cases contributed to killing at least one mutant.\n")
+		return
+	}
+	fmt.Fprintf(w, "\n  Tests that killed no mutants (may not test query logic):\n")
+	for _, name := range tc.ZeroKillTests {
+		fmt.Fprintf(w, "    %s\n", name)
 	}
 }
 

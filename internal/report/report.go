@@ -2,6 +2,7 @@ package report
 
 import (
 	"path/filepath"
+	"sort"
 
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/mutant"
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/runner"
@@ -80,6 +81,43 @@ func Build(projectDir string, mutants []*mutant.Mutant, results []runner.Result)
 	}
 
 	return summary, details
+}
+
+// TestContribution summarises which test functions contributed to killing mutants.
+type TestContribution struct {
+	TotalTestCases int      // unique test names observed across all mutant runs
+	TotalMutants   int      // mutants evaluated (Killed + Survived + Timeouts + Errors)
+	ZeroKillTests  []string // test names that ran but killed no mutant, sorted
+}
+
+// BuildTestContribution analyses MutantDetails to identify which test cases
+// did not contribute to killing any mutant.
+func BuildTestContribution(summary Summary, details []MutantDetail) TestContribution {
+	allTests := map[string]bool{}
+	killingTests := map[string]bool{}
+
+	for _, d := range details {
+		for _, tr := range d.TestResults {
+			allTests[tr.Name] = true
+			if d.Status == runner.Killed && !tr.Passed {
+				killingTests[tr.Name] = true
+			}
+		}
+	}
+
+	var zeroKill []string
+	for name := range allTests {
+		if !killingTests[name] {
+			zeroKill = append(zeroKill, name)
+		}
+	}
+	sort.Strings(zeroKill)
+
+	return TestContribution{
+		TotalTestCases: len(allTests),
+		TotalMutants:   summary.Total,
+		ZeroKillTests:  zeroKill,
+	}
 }
 
 func relPath(base, abs string) string {
