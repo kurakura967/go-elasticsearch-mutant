@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/kurakura967/go-elasticsearch-mutant/internal/analyzer"
@@ -294,9 +295,59 @@ func wouldCauseUnusedImport(site *analyzer.CallSite) bool {
 	return false
 }
 
+// hasSiblingMapKey reports whether the map literal containing the KeyValueExpr at
+// site.Line/site.Field also has a string key equal to siblingKey.
+func hasSiblingMapKey(site *analyzer.CallSite, siblingKey string) bool {
+	src, err := os.ReadFile(site.File)
+	if err != nil {
+		return false
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, site.File, src, 0)
+	if err != nil {
+		return false
+	}
+
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		containsTarget, hasSibling := false, false
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			bl, ok := kv.Key.(*ast.BasicLit)
+			if !ok || bl.Kind != token.STRING {
+				continue
+			}
+			key, _ := strconv.Unquote(bl.Value)
+			if fset.Position(kv.Pos()).Line == site.Line && key == site.Field {
+				containsTarget = true
+			}
+			if key == siblingKey {
+				hasSibling = true
+			}
+		}
+		if containsTarget && hasSibling {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
 // applyRewrite re-parses site.File, locates the KeyValueExpr at site.Line whose
 // key is site.Field, calls rewrite to mutate the node in-place, then returns the
 // go/format-formatted result.
+// For struct field sites (IsMapKey=false) the key is an *ast.Ident.
+// For map key sites (IsMapKey=true) the key is an *ast.BasicLit string.
 func applyRewrite(site *analyzer.CallSite, rewrite func(*ast.KeyValueExpr)) ([]byte, error) {
 	src, err := os.ReadFile(site.File)
 	if err != nil {
@@ -318,14 +369,27 @@ func applyRewrite(site *analyzer.CallSite, rewrite func(*ast.KeyValueExpr)) ([]b
 		if !ok {
 			return true
 		}
-		ident, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if fset.Position(kv.Pos()).Line == site.Line && ident.Name == site.Field {
-			rewrite(kv)
-			found = true
-			return false
+		if site.IsMapKey {
+			bl, ok := kv.Key.(*ast.BasicLit)
+			if !ok || bl.Kind != token.STRING {
+				return true
+			}
+			key, _ := strconv.Unquote(bl.Value)
+			if fset.Position(kv.Pos()).Line == site.Line && key == site.Field {
+				rewrite(kv)
+				found = true
+				return false
+			}
+		} else {
+			ident, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if fset.Position(kv.Pos()).Line == site.Line && ident.Name == site.Field {
+				rewrite(kv)
+				found = true
+				return false
+			}
 		}
 		return true
 	})

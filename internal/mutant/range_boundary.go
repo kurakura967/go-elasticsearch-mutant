@@ -8,8 +8,12 @@ import (
 )
 
 var rangeBoundarySwap = map[string]string{
+	// Typed API (CamelCase struct fields)
 	"Gte": "Gt",
 	"Lte": "Lt",
+	// map[string]any (lowercase keys)
+	"gte": "gt",
+	"lte": "lt",
 }
 
 var rangeNodeTypes = map[string]bool{
@@ -25,7 +29,7 @@ type RangeBoundary struct{}
 func (r *RangeBoundary) Name() string { return "RangeBoundary" }
 
 func (r *RangeBoundary) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
-	if !rangeNodeTypes[site.NodeType] {
+	if !site.IsMapKey && !rangeNodeTypes[site.NodeType] {
 		return nil, nil
 	}
 	newField, ok := rangeBoundarySwap[site.Field]
@@ -34,7 +38,11 @@ func (r *RangeBoundary) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 	}
 
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
-		kv.Key.(*ast.Ident).Name = newField
+		if site.IsMapKey {
+			kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
+		} else {
+			kv.Key.(*ast.Ident).Name = newField
+		}
 	})
 	if err != nil {
 		return nil, err

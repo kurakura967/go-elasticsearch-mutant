@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"strconv"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -22,6 +23,14 @@ var targetFields = map[string]bool{
 	"Lte":     true,
 	"Lt":      true,
 	"Type":    true,
+}
+
+// mapRangeFields is the set of lowercase keys in map[string]any range queries to detect.
+var mapRangeFields = map[string]bool{
+	"gte": true,
+	"gt":  true,
+	"lte": true,
+	"lt":  true,
 }
 
 // Analyzer analyzes Go packages and extracts ES Typed API call sites.
@@ -115,41 +124,87 @@ func inspectNode(n ast.Node, fset *token.FileSet, info *gotypes.Info, funcStack 
 		return true
 	}
 
-	structName, ok := esStructName(info, cl)
-	if !ok {
-		return true
-	}
-
 	funcName := ""
 	if len(funcStack) > 0 {
 		funcName = funcStack[len(funcStack)-1]
 	}
 
-	for _, elt := range cl.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
+	// ES Typed API struct fields.
+	if structName, ok := esStructName(info, cl); ok {
+		for _, elt := range cl.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			ident, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			if !targetFields[ident.Name] {
+				continue
+			}
+			pos := fset.Position(kv.Pos())
+			*callSites = append(*callSites, &CallSite{
+				File:     pos.Filename,
+				Line:     pos.Line,
+				NodeType: structName,
+				Field:    ident.Name,
+				FuncName: funcName,
+				Node:     kv,
+			})
 		}
-		ident, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		if !targetFields[ident.Name] {
-			continue
-		}
+		return true
+	}
 
-		pos := fset.Position(kv.Pos())
-		*callSites = append(*callSites, &CallSite{
-			File:     pos.Filename,
-			Line:     pos.Line,
-			NodeType: structName,
-			Field:    ident.Name,
-			FuncName: funcName,
-			Node:     kv,
-		})
+	// map[string]any / map[string]interface{} range query literals.
+	if isStringAnyMap(info, cl) {
+		for _, elt := range cl.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			lit, ok := kv.Key.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			key, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				continue
+			}
+			if !mapRangeFields[key] {
+				continue
+			}
+			pos := fset.Position(kv.Pos())
+			*callSites = append(*callSites, &CallSite{
+				File:     pos.Filename,
+				Line:     pos.Line,
+				NodeType: "RangeMap",
+				Field:    key,
+				FuncName: funcName,
+				Node:     kv,
+				IsMapKey: true,
+			})
+		}
 	}
 
 	return true
+}
+
+// isStringAnyMap reports whether cl is a map[string]any (or map[string]interface{}) literal.
+func isStringAnyMap(info *gotypes.Info, cl *ast.CompositeLit) bool {
+	tv, ok := info.Types[cl]
+	if !ok {
+		return false
+	}
+	mt, ok := tv.Type.(*gotypes.Map)
+	if !ok {
+		return false
+	}
+	if mt.Key().String() != "string" {
+		return false
+	}
+	_, ok = mt.Elem().Underlying().(*gotypes.Interface)
+	return ok
 }
 
 // esStructName returns the struct name if cl is a composite literal of an ES types struct.

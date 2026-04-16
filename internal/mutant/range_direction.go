@@ -8,10 +8,16 @@ import (
 )
 
 var rangeDirectionSwap = map[string]string{
+	// Typed API (CamelCase struct fields)
 	"Gte": "Lte",
 	"Lte": "Gte",
 	"Gt":  "Lt",
 	"Lt":  "Gt",
+	// map[string]any (lowercase keys)
+	"gte": "lte",
+	"lte": "gte",
+	"gt":  "lt",
+	"lt":  "gt",
 }
 
 // RangeDirection swaps the direction of a range boundary (Gte↔Lte, Gt↔Lt),
@@ -23,7 +29,7 @@ type RangeDirection struct{}
 func (r *RangeDirection) Name() string { return "RangeDirection" }
 
 func (r *RangeDirection) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
-	if !rangeNodeTypes[site.NodeType] {
+	if !site.IsMapKey && !rangeNodeTypes[site.NodeType] {
 		return nil, nil
 	}
 	newField, ok := rangeDirectionSwap[site.Field]
@@ -33,17 +39,27 @@ func (r *RangeDirection) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 
 	desc := fmt.Sprintf("%s.%s → %s", site.NodeType, site.Field, newField)
 
-	if hasSiblingField(site, newField) {
+	var duplicate bool
+	if site.IsMapKey {
+		duplicate = hasSiblingMapKey(site, newField)
+	} else {
+		duplicate = hasSiblingField(site, newField)
+	}
+	if duplicate {
 		return []*Mutant{{
 			Site:        site,
 			Operator:    r.Name(),
 			Description: desc,
-			SkipReason:  fmt.Sprintf("%s already has a %s field; renaming %s would create a duplicate struct key", site.NodeType, newField, site.Field),
+			SkipReason:  fmt.Sprintf("%s already has a %s key; renaming %s would create a duplicate key", site.NodeType, newField, site.Field),
 		}}, nil
 	}
 
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
-		kv.Key.(*ast.Ident).Name = newField
+		if site.IsMapKey {
+			kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
+		} else {
+			kv.Key.(*ast.Ident).Name = newField
+		}
 	})
 	if err != nil {
 		return nil, err
