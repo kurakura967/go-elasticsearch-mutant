@@ -10,5 +10,6 @@ type CallSite struct {
 	Field    string   // field name, e.g. "Must", "Gte"; lowercase key e.g. "gte" for map sites
 	FuncName string   // enclosing function name, e.g. "BuildSearchByCategory"
 	Node     ast.Node // the *ast.KeyValueExpr node (used by rewriter)
-	IsMapKey bool     // true when the target is a map[string]any string key, not a struct field
+	IsMapKey      bool // true when the target is a map[string]any literal key (e.g. map[string]any{"gte": val})
+	IsIndexAssign bool // true when the target is a map index assignment (e.g. rq["gte"] = val)
 }

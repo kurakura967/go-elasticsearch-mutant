@@ -343,6 +343,63 @@ func hasSiblingMapKey(site *analyzer.CallSite, siblingKey string) bool {
 	return found
 }
 
+// applyIndexAssignRewrite re-parses site.File, locates the map index assignment
+// at site.Line whose key is site.Field (e.g. rq["gte"] = val), renames the key
+// to newKey, then returns the go/format-formatted result.
+func applyIndexAssignRewrite(site *analyzer.CallSite, newKey string) ([]byte, error) {
+	src, err := os.ReadFile(site.File)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", site.File, err)
+	}
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, site.File, src, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", site.File, err)
+	}
+
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		if fset.Position(assign.Pos()).Line != site.Line {
+			return true
+		}
+		for _, lhs := range assign.Lhs {
+			indexExpr, ok := lhs.(*ast.IndexExpr)
+			if !ok {
+				continue
+			}
+			keyLit, ok := indexExpr.Index.(*ast.BasicLit)
+			if !ok || keyLit.Kind != token.STRING {
+				continue
+			}
+			key, _ := strconv.Unquote(keyLit.Value)
+			if key == site.Field {
+				keyLit.Value = `"` + newKey + `"`
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+
+	if !found {
+		return nil, fmt.Errorf("index assign not found at %s:%d (key %q)", site.File, site.Line, site.Field)
+	}
+
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, f); err != nil {
+		return nil, fmt.Errorf("format %s: %w", site.File, err)
+	}
+	return buf.Bytes(), nil
+}
+
 // applyRewrite re-parses site.File, locates the KeyValueExpr at site.Line whose
 // key is site.Field, calls rewrite to mutate the node in-place, then returns the
 // go/format-formatted result.

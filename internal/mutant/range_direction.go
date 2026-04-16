@@ -29,7 +29,7 @@ type RangeDirection struct{}
 func (r *RangeDirection) Name() string { return "RangeDirection" }
 
 func (r *RangeDirection) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
-	if !site.IsMapKey && !rangeNodeTypes[site.NodeType] {
+	if !site.IsMapKey && !site.IsIndexAssign && !rangeNodeTypes[site.NodeType] {
 		return nil, nil
 	}
 	newField, ok := rangeDirectionSwap[site.Field]
@@ -39,28 +39,38 @@ func (r *RangeDirection) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 
 	desc := fmt.Sprintf("%s.%s → %s", site.NodeType, site.Field, newField)
 
-	var duplicate bool
-	if site.IsMapKey {
-		duplicate = hasSiblingMapKey(site, newField)
-	} else {
-		duplicate = hasSiblingField(site, newField)
-	}
-	if duplicate {
-		return []*Mutant{{
-			Site:        site,
-			Operator:    r.Name(),
-			Description: desc,
-			SkipReason:  fmt.Sprintf("%s already has a %s key; renaming %s would create a duplicate key", site.NodeType, newField, site.Field),
-		}}, nil
+	// Index assignments allow duplicate keys at runtime (last write wins),
+	// so no compile-error guard is needed. Only check for literal siblings.
+	if !site.IsIndexAssign {
+		var duplicate bool
+		if site.IsMapKey {
+			duplicate = hasSiblingMapKey(site, newField)
+		} else {
+			duplicate = hasSiblingField(site, newField)
+		}
+		if duplicate {
+			return []*Mutant{{
+				Site:        site,
+				Operator:    r.Name(),
+				Description: desc,
+				SkipReason:  fmt.Sprintf("%s already has a %s key; renaming %s would create a duplicate key", site.NodeType, newField, site.Field),
+			}}, nil
+		}
 	}
 
-	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
-		if site.IsMapKey {
-			kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
-		} else {
-			kv.Key.(*ast.Ident).Name = newField
-		}
-	})
+	var src []byte
+	var err error
+	if site.IsIndexAssign {
+		src, err = applyIndexAssignRewrite(site, newField)
+	} else {
+		src, err = applyRewrite(site, func(kv *ast.KeyValueExpr) {
+			if site.IsMapKey {
+				kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
+			} else {
+				kv.Key.(*ast.Ident).Name = newField
+			}
+		})
+	}
 	if err != nil {
 		return nil, err
 	}

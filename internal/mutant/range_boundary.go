@@ -29,7 +29,7 @@ type RangeBoundary struct{}
 func (r *RangeBoundary) Name() string { return "RangeBoundary" }
 
 func (r *RangeBoundary) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
-	if !site.IsMapKey && !rangeNodeTypes[site.NodeType] {
+	if !site.IsMapKey && !site.IsIndexAssign && !rangeNodeTypes[site.NodeType] {
 		return nil, nil
 	}
 	newField, ok := rangeBoundarySwap[site.Field]
@@ -37,13 +37,19 @@ func (r *RangeBoundary) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 		return nil, nil
 	}
 
-	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
-		if site.IsMapKey {
-			kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
-		} else {
-			kv.Key.(*ast.Ident).Name = newField
-		}
-	})
+	var src []byte
+	var err error
+	if site.IsIndexAssign {
+		src, err = applyIndexAssignRewrite(site, newField)
+	} else {
+		src, err = applyRewrite(site, func(kv *ast.KeyValueExpr) {
+			if site.IsMapKey {
+				kv.Key.(*ast.BasicLit).Value = `"` + newField + `"`
+			} else {
+				kv.Key.(*ast.Ident).Name = newField
+			}
+		})
+	}
 	if err != nil {
 		return nil, err
 	}

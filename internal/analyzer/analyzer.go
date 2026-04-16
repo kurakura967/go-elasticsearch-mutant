@@ -119,70 +119,96 @@ func inspectNode(n ast.Node, fset *token.FileSet, info *gotypes.Info, funcStack 
 	if n == nil {
 		return false
 	}
-	cl, ok := n.(*ast.CompositeLit)
-	if !ok {
-		return true
-	}
 
 	funcName := ""
 	if len(funcStack) > 0 {
 		funcName = funcStack[len(funcStack)-1]
 	}
 
-	// ES Typed API struct fields.
-	if structName, ok := esStructName(info, cl); ok {
-		for _, elt := range cl.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				continue
+	switch v := n.(type) {
+	case *ast.CompositeLit:
+		// ES Typed API struct fields.
+		if structName, ok := esStructName(info, v); ok {
+			for _, elt := range v.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				ident, ok := kv.Key.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				if !targetFields[ident.Name] {
+					continue
+				}
+				pos := fset.Position(kv.Pos())
+				*callSites = append(*callSites, &CallSite{
+					File:     pos.Filename,
+					Line:     pos.Line,
+					NodeType: structName,
+					Field:    ident.Name,
+					FuncName: funcName,
+					Node:     kv,
+				})
 			}
-			ident, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			if !targetFields[ident.Name] {
-				continue
-			}
-			pos := fset.Position(kv.Pos())
-			*callSites = append(*callSites, &CallSite{
-				File:     pos.Filename,
-				Line:     pos.Line,
-				NodeType: structName,
-				Field:    ident.Name,
-				FuncName: funcName,
-				Node:     kv,
-			})
+			return true
 		}
-		return true
-	}
 
-	// map[string]any / map[string]interface{} range query literals.
-	if isStringAnyMap(info, cl) {
-		for _, elt := range cl.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
+		// map[string]any / map[string]interface{} range query literals.
+		if isStringAnyMap(info, v) {
+			for _, elt := range v.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				lit, ok := kv.Key.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				key, err := strconv.Unquote(lit.Value)
+				if err != nil || !mapRangeFields[key] {
+					continue
+				}
+				pos := fset.Position(kv.Pos())
+				*callSites = append(*callSites, &CallSite{
+					File:     pos.Filename,
+					Line:     pos.Line,
+					NodeType: "RangeMap",
+					Field:    key,
+					FuncName: funcName,
+					Node:     kv,
+					IsMapKey: true,
+				})
+			}
+		}
+
+	case *ast.AssignStmt:
+		// map[string]any index assignments: rq["gte"] = val
+		for _, lhs := range v.Lhs {
+			indexExpr, ok := lhs.(*ast.IndexExpr)
 			if !ok {
 				continue
 			}
-			lit, ok := kv.Key.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
+			keyLit, ok := indexExpr.Index.(*ast.BasicLit)
+			if !ok || keyLit.Kind != token.STRING {
 				continue
 			}
-			key, err := strconv.Unquote(lit.Value)
-			if err != nil {
+			key, err := strconv.Unquote(keyLit.Value)
+			if err != nil || !mapRangeFields[key] {
 				continue
 			}
-			if !mapRangeFields[key] {
+			if !isStringAnyType(info.TypeOf(indexExpr.X)) {
 				continue
 			}
-			pos := fset.Position(kv.Pos())
+			pos := fset.Position(v.Pos())
 			*callSites = append(*callSites, &CallSite{
-				File:     pos.Filename,
-				Line:     pos.Line,
-				NodeType: "RangeMap",
-				Field:    key,
-				FuncName: funcName,
-				Node:     kv,
-				IsMapKey: true,
+				File:          pos.Filename,
+				Line:          pos.Line,
+				NodeType:      "RangeMap",
+				Field:         key,
+				FuncName:      funcName,
+				Node:          indexExpr,
+				IsIndexAssign: true,
 			})
 		}
 	}
@@ -190,13 +216,12 @@ func inspectNode(n ast.Node, fset *token.FileSet, info *gotypes.Info, funcStack 
 	return true
 }
 
-// isStringAnyMap reports whether cl is a map[string]any (or map[string]interface{}) literal.
-func isStringAnyMap(info *gotypes.Info, cl *ast.CompositeLit) bool {
-	tv, ok := info.Types[cl]
-	if !ok {
+// isStringAnyType reports whether t is map[string]any (or map[string]interface{}).
+func isStringAnyType(t gotypes.Type) bool {
+	if t == nil {
 		return false
 	}
-	mt, ok := tv.Type.(*gotypes.Map)
+	mt, ok := t.(*gotypes.Map)
 	if !ok {
 		return false
 	}
@@ -205,6 +230,15 @@ func isStringAnyMap(info *gotypes.Info, cl *ast.CompositeLit) bool {
 	}
 	_, ok = mt.Elem().Underlying().(*gotypes.Interface)
 	return ok
+}
+
+// isStringAnyMap reports whether cl is a map[string]any (or map[string]interface{}) literal.
+func isStringAnyMap(info *gotypes.Info, cl *ast.CompositeLit) bool {
+	tv, ok := info.Types[cl]
+	if !ok {
+		return false
+	}
+	return isStringAnyType(tv.Type)
 }
 
 // esStructName returns the struct name if cl is a composite literal of an ES types struct.
