@@ -93,11 +93,16 @@ SKIPPED (4):
 
 ## Supported Mutation Operators
 
-The tool detects struct field assignments from the `github.com/elastic/go-elasticsearch/v8/typedapi/types` package and applies the following operators:
+The tool detects mutation targets from two patterns and applies the following operators:
+
+- **Typed API structs** — struct field assignments from the `github.com/elastic/go-elasticsearch/v8/typedapi/types` package (identified via type info)
+- **Map-style range queries** — `map[string]any` / `map[string]interface{}` literals whose keys include `"gte"`, `"gt"`, `"lte"`, or `"lt"`
 
 ### RemoveClause
 
 Sets `BoolQuery.Must` or `BoolQuery.Should` to `nil`, testing that required clauses are enforced by tests.
+
+> **Note:** Automatically skipped when removing the clause value would leave a locally-declared variable or an imported package unused (would produce a compile error).
 
 ```go
 // Original
@@ -146,25 +151,32 @@ Filter: []types.Query  →  Must: []types.Query
 
 Changes inclusive range boundaries to exclusive ones, testing that tests verify exact boundary conditions.
 
-Applies to: `NumberRangeQuery`, `DateRangeQuery`, `TermRangeQuery`, `UntypedRangeQuery`
+Applies to: `NumberRangeQuery`, `DateRangeQuery`, `TermRangeQuery`, `UntypedRangeQuery`, and `map[string]any` range literals
 
 ```go
-// Original          // Mutant
-Gte: &min      →    Gt: &min
-Lte: &max      →    Lt: &max
+// Typed API
+Gte: &min  →  Gt: &min
+Lte: &max  →  Lt: &max
+
+// map[string]any
+"gte": min  →  "gt": min
+"lte": max  →  "lt": max
 ```
 
 ### RangeDirection
 
 Swaps the direction of a range boundary (`Gte` ↔ `Lte`, `Gt` ↔ `Lt`), testing that tests verify the correct bound is used.
 
-Applies to: `NumberRangeQuery`, `DateRangeQuery`, `TermRangeQuery`, `UntypedRangeQuery`
+Applies to: `NumberRangeQuery`, `DateRangeQuery`, `TermRangeQuery`, `UntypedRangeQuery`, and `map[string]any` range literals
 
-> **Note:** Automatically skipped when the target field already exists as a sibling (renaming would create a duplicate struct key, which is a compile error in Go).
+> **Note:** Automatically skipped when the target field already exists as a sibling (renaming would create a duplicate key, which is a compile error in Go).
 
 ```go
-// Original          // Mutant
-Lte: &deadline →    Gte: &deadline
+// Typed API
+Lte: &deadline  →  Gte: &deadline
+
+// map[string]any
+"lte": deadline  →  "gte": deadline
 ```
 
 ### RemoveMustNot
@@ -220,7 +232,7 @@ Type: &textquerytype.Mostfields
 
 ## How It Works
 
-1. **Analyze** — Loads your Go packages and finds all Typed API struct field assignments that are mutation targets.
+1. **Analyze** — Loads your Go packages and finds all mutation targets: Typed API struct field assignments and `map[string]any` range query literals.
 2. **Generate** — Applies each operator to each target site, producing a set of mutated source files (using `go/ast` rewriting).
 3. **Run** — Executes `go test` with each mutant via `go test -overlay`, leaving original files untouched.
 4. **Report** — Shows which mutants were killed (tests caught the change), survived (tests did not catch it), or skipped.
