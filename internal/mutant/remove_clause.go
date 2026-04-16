@@ -36,6 +36,17 @@ func (r *RemoveClause) Apply(site *analyzer.CallSite) ([]*Mutant, error) {
 		}}, nil
 	}
 
+	// If replacing the value with nil would leave an imported package unused,
+	// the mutated code would not compile. Skip with a reason.
+	if wouldCauseUnusedImport(site) {
+		return []*Mutant{{
+			Site:        site,
+			Operator:    r.Name(),
+			Description: fmt.Sprintf("BoolQuery.%s → nil", site.Field),
+			SkipReason:  "removing this clause would leave an imported package unused",
+		}}, nil
+	}
+
 	src, err := applyRewrite(site, func(kv *ast.KeyValueExpr) {
 		kv.Value = ast.NewIdent("nil")
 	})
